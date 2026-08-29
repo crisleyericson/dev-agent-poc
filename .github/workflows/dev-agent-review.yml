@@ -7,6 +7,11 @@ on:
         description: Pull request number
         required: true
         type: number
+      force_retry_once:
+        description: Simulate first-attempt timeout for Gate F
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -26,6 +31,7 @@ jobs:
       OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ inputs.pr_number }}
+      FORCE_RETRY_ONCE: ${{ inputs.force_retry_once }}
 
       OPENCODE_CONFIG_CONTENT: >-
         {
@@ -146,10 +152,20 @@ jobs:
             ATTEMPT_LOG="/tmp/opencode-review-attempt-${ATTEMPT}.jsonl"
             rm -f "$ATTEMPT_LOG"
 
-            set +e
-            timeout --signal=TERM --kill-after=15s 180               opencode run                 --model omniroute/review-combo                 --format json                 "$(cat /tmp/review-prompt.txt)"               | tee "$ATTEMPT_LOG"
-            EXIT_CODE=$?
-            set -e
+            if [ "$FORCE_RETRY_ONCE" = "true" ] && [ "$ATTEMPT" -eq 1 ]; then
+              echo "Simulating retryable timeout for Gate F."
+              EXIT_CODE=124
+            else
+              set +e
+              timeout --signal=TERM --kill-after=15s 180 \
+                opencode run \
+                  --model omniroute/review-combo \
+                  --format json \
+                  "$(cat /tmp/review-prompt.txt)" \
+                | tee "$ATTEMPT_LOG"
+              EXIT_CODE=$?
+              set -e
+            fi
 
             if [ "$EXIT_CODE" -eq 0 ]; then
               cp "$ATTEMPT_LOG" /tmp/opencode-review.jsonl
@@ -158,7 +174,7 @@ jobs:
             fi
 
             if [ "$EXIT_CODE" -eq 124 ]; then
-              echo "REVIEW attempt ${ATTEMPT} timed out after 180s."
+              echo "REVIEW attempt ${ATTEMPT} timed out."
             else
               echo "REVIEW attempt ${ATTEMPT} failed with exit code ${EXIT_CODE}."
             fi
