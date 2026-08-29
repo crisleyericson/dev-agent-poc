@@ -3,5 +3,5 @@ export function add(a, b) {
 }
 
 export function subtract(a, b) {
-  return a - b;
+  return Math.abs(a - b);
 }
