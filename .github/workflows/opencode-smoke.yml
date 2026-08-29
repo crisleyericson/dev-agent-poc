@@ -28,8 +28,11 @@ jobs:
                 "apiKey": "{env:OMNIROUTE_API_KEY}"
               },
               "models": {
-                "build-combo": {
-                  "name": "Build Combo"
+                "review-combo": {
+                  "name": "Review Combo"
+                },
+                "deep-combo": {
+                  "name": "Deep Combo"
                 }
               }
             }
@@ -48,15 +51,28 @@ jobs:
           npm install --global opencode-ai@1.18.23
           opencode --version
 
-      - name: Test OmniRoute through OpenCode
+      - name: Test REVIEW combo
         run: |
-          timeout 180 \
+          timeout 60 \
             opencode run \
-              --model omniroute/build-combo \
+              --model omniroute/review-combo \
               --format json \
-              "Do not use tools. Respond exactly with: OPENCODE_OMNIROUTE_OK" \
-            | tee opencode-smoke.jsonl
+              "Do not use tools. Respond exactly with: REVIEW_OK" \
+            | tee review-smoke.jsonl
 
-      - name: Assert response
+      - name: Assert REVIEW response
         run: |
-          grep -q 'OPENCODE_OMNIROUTE_OK' opencode-smoke.jsonl
+          grep -q 'REVIEW_OK' review-smoke.jsonl
+
+      - name: Test DEEP combo
+        run: |
+          timeout 60 \
+            opencode run \
+              --model omniroute/deep-combo \
+              --format json \
+              "Do not use tools. Respond exactly with: DEEP_OK" \
+            | tee deep-smoke.jsonl
+
+      - name: Assert DEEP response
+        run: |
+          grep -q 'DEEP_OK' deep-smoke.jsonl
