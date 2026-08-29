@@ -71,37 +71,32 @@ jobs:
 
       - name: Prepare BUILD prompt
         run: |
-          python3 <<'PY'
-          import os
-
-          prompt = f"""# BUILD
-
-Implement the GitHub Issue below.
-
-## Issue
-
-Number: #{os.environ["ISSUE_NUMBER"]}
-Title: {os.environ["ISSUE_TITLE"]}
-
-{os.environ["ISSUE_BODY"]}
-
-## Rules
-
-- Inspect only files necessary for this task.
-- Make the minimum implementation required.
-- Modify only files under src/** and test/**.
-- Do not modify workflows, configuration, documentation, or unrelated files.
-- Do not run shell commands.
-- Do not use git.
-- Do not create branches.
-- Do not commit.
-- Do not push.
-- Do not create a pull request.
-- Git operations and validation are handled externally after you finish.
-"""
-          with open("/tmp/build-prompt.txt", "w") as f:
-              f.write(prompt)
-          PY
+          {
+            echo '# BUILD'
+            echo
+            echo 'Implement the GitHub Issue below.'
+            echo
+            echo '## Issue'
+            echo
+            echo "Number: #${ISSUE_NUMBER}"
+            echo "Title: ${ISSUE_TITLE}"
+            echo
+            printf '%s\n' "${ISSUE_BODY}"
+            echo
+            echo '## Rules'
+            echo
+            echo '- Inspect only files necessary for this task.'
+            echo '- Make the minimum implementation required.'
+            echo '- Modify only files under src/** and test/**.'
+            echo '- Do not modify workflows, configuration, documentation, or unrelated files.'
+            echo '- Do not run shell commands.'
+            echo '- Do not use git.'
+            echo '- Do not create branches.'
+            echo '- Do not commit.'
+            echo '- Do not push.'
+            echo '- Do not create a pull request.'
+            echo '- Git operations and validation are handled externally after you finish.'
+          } > /tmp/build-prompt.txt
 
       - name: Run BUILD agent
         run: |
@@ -167,25 +162,19 @@ Title: {os.environ["ISSUE_TITLE"]}
 
       - name: Prepare PR body
         run: |
-          python3 <<'PY'
-          import os
-
-          body = f"""Automated BUILD for #{os.environ["ISSUE_NUMBER"]}.
-
-          Source issue: #{os.environ["ISSUE_NUMBER"]}
-
-          Validation:
-          - OpenCode BUILD completed
-          - allowed-files validation passed
-          - npm test passed
-          - git diff --check passed
-
-          Merge remains manual.
-          """
-
-          with open("/tmp/pr-body.md", "w") as f:
-              f.write(body)
-          PY
+          {
+            echo "Automated BUILD for #${ISSUE_NUMBER}."
+            echo
+            echo "Source issue: #${ISSUE_NUMBER}"
+            echo
+            echo 'Validation:'
+            echo '- OpenCode BUILD completed'
+            echo '- allowed-files validation passed'
+            echo '- npm test passed'
+            echo '- git diff --check passed'
+            echo
+            echo 'Merge remains manual.'
+          } > /tmp/pr-body.md
 
       - name: Create pull request
         run: |
