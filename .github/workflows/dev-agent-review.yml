@@ -17,10 +17,6 @@ permissions:
   pull-requests: write
   issues: write
 
-concurrency:
-  group: dev-agent-review-${{ inputs.pr_number }}
-  cancel-in-progress: false
-
 jobs:
   review:
     runs-on: ubuntu-latest
