@@ -50,10 +50,7 @@ jobs:
             }
           },
           "permission": {
-            "*": "deny",
-            "read": "allow",
-            "glob": "allow",
-            "grep": "allow"
+            "*": "deny"
           }
         }
 
@@ -130,7 +127,8 @@ jobs:
             echo
             echo '- Verify every acceptance criterion.'
             echo '- Check correctness, regressions, and test adequacy.'
-            echo '- Inspect repository files only when necessary.'
+            echo '- Use only the Source Issue, Pull Request metadata, and Diff provided in this prompt.'
+            echo '- Do not inspect repository files or use tools.'
             echo '- Do not modify any file.'
             echo '- Do not run shell commands.'
             echo '- Do not use git.'
