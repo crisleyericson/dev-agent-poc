@@ -101,63 +101,13 @@ jobs:
       - name: Run BUILD agent
         shell: bash
         run: |
-          set -o pipefail
-
-          MAX_ATTEMPTS=3
-
-          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
-            echo "=== BUILD attempt $ATTEMPT/$MAX_ATTEMPTS ==="
-
-            ATTEMPT_LOG="/tmp/opencode-build-attempt-${ATTEMPT}.jsonl"
-            ATTEMPT_ERR="/tmp/opencode-build-attempt-${ATTEMPT}.stderr"
-            rm -f "$ATTEMPT_LOG" "$ATTEMPT_ERR"
-
-            set +e
-
-            timeout --signal=TERM --kill-after=15s 600 \
-              opencode run \
-                --model omniroute/build-combo \
-                --format json \
-                "$(cat /tmp/build-prompt.txt)" \
-              2> >(tee "$ATTEMPT_ERR" >&2) \
-              | tee "$ATTEMPT_LOG"
-
-            EXIT_CODE=${PIPESTATUS[0]}
-
-            set -e
-
-            if [ "$EXIT_CODE" -eq 0 ]; then
-              cp "$ATTEMPT_LOG" /tmp/opencode-build.jsonl
-              echo "BUILD concluído no attempt $ATTEMPT"
-              exit 0
-            fi
-
-            RETRY_REASON=""
-
-            if [ "$EXIT_CODE" -eq 124 ]; then
-              RETRY_REASON="TIMEOUT"
-            elif grep -Eiq \
-              '(^|[^0-9])(429|502|503|504)([^0-9]|$)|busy|capacity|rate[ _-]?limit' \
-              "$ATTEMPT_LOG" "$ATTEMPT_ERR"; then
-              RETRY_REASON="TRANSIENT_PROVIDER"
-            fi
-
-            if [ -z "$RETRY_REASON" ]; then
-              echo "::error::OpenCode falhou com erro não transitório (exit code $EXIT_CODE)"
-              exit "$EXIT_CODE"
-            fi
-
-            echo "::warning::BUILD attempt $ATTEMPT falhou: $RETRY_REASON (exit code $EXIT_CODE)"
-
-            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
-              echo "::error::BUILD esgotou $MAX_ATTEMPTS tentativas. Último motivo: $RETRY_REASON"
-              exit "$EXIT_CODE"
-            fi
-
-            BACKOFF=$((ATTEMPT * 15))
-            echo "Retry em ${BACKOFF}s..."
-            sleep "$BACKOFF"
-          done
+          .github/scripts/run-opencode-agent.sh \
+            --stage BUILD \
+            --prompt /tmp/build-prompt.txt \
+            --output /tmp/opencode-build.jsonl \
+            --model omniroute/build-combo \
+            --timeout 600 \
+            --attempts 3
 
       - name: Validate changed files
         run: |
