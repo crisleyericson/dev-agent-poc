@@ -13,6 +13,11 @@ engine:
     COPILOT_PROVIDER_TYPE: openai
     COPILOT_MODEL: build-combo
 
+models:
+  default-ai-credits-pricing:
+    input: 0.000001
+    output: 0.000001
+
 network:
   allowed:
     - defaults
