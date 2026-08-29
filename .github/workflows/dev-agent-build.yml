@@ -148,7 +148,7 @@ jobs:
 
       - name: Create branch and commit
         env:
-          BRANCH_NAME: agent-v3/issue-${{ github.event.issue.number }}-${{ github.run_id }}
+          BRANCH_NAME: agent-v3/issue-${{ github.event.issue.number }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           git config user.name "dev-agent-bot"
           git config user.email "dev-agent-bot@users.noreply.github.com"
