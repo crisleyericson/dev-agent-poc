@@ -161,12 +161,44 @@ jobs:
         run: |
           set -o pipefail
 
-          timeout --signal=TERM --kill-after=15s 600 \
-            opencode run \
-              --model omniroute/build-combo \
-              --format json \
-              "$(cat /tmp/fix-prompt.txt)" \
-            | tee /tmp/opencode-fix.jsonl
+          MAX_ATTEMPTS=3
+
+          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo "=== FIX attempt $ATTEMPT/$MAX_ATTEMPTS ==="
+
+            set +e
+
+            timeout --signal=TERM --kill-after=15s 600 \
+              opencode run \
+                --model omniroute/build-combo \
+                --format json \
+                "$(cat /tmp/fix-prompt.txt)" \
+              | tee "/tmp/opencode-fix-attempt-${ATTEMPT}.jsonl"
+
+            EXIT_CODE=${PIPESTATUS[0]}
+
+            set -e
+
+            if [ "$EXIT_CODE" -eq 0 ]; then
+              cp "/tmp/opencode-fix-attempt-${ATTEMPT}.jsonl" /tmp/opencode-fix.jsonl
+              echo "FIX concluído no attempt $ATTEMPT"
+              exit 0
+            fi
+
+            if [ "$EXIT_CODE" -ne 124 ]; then
+              echo "::error::OpenCode falhou com exit code $EXIT_CODE"
+              exit "$EXIT_CODE"
+            fi
+
+            echo "::warning::OpenCode timeout no attempt $ATTEMPT"
+
+            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
+              echo "::error::OpenCode excedeu 600s em $MAX_ATTEMPTS tentativas"
+              exit 124
+            fi
+
+            sleep $((ATTEMPT * 15))
+          done
 
       - name: Validate changed files
         run: |
