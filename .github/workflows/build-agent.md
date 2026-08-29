@@ -65,33 +65,52 @@ Do not query GitHub to rediscover the Issue.
 
 ${{ steps.sanitized.outputs.text }}
 
-## Rules
+## Execution
 
-Inspect only repository files needed to implement the task.
+Work directly in the checked-out repository.
 
-Prefer the built-in file inspection and edit tools over shell commands.
+1. Identify only the files needed for this task.
+   - If the task names a file explicitly, open it directly.
+   - Do not repeatedly search the repository.
+   - Use at most one discovery/search pass when file locations are unknown.
+   - Batch independent file reads in the same turn.
 
-Make only changes required by the acceptance criteria.
+2. Inspect only the source and tests relevant to the acceptance criteria.
+   - Do not inspect README files, git history, package manifests, configuration,
+     or unrelated files unless they are directly required by the task.
+   - The required test command for this workflow is already known: `npm test`.
 
-Do not modify workflows, configuration, dependencies, package manifests,
-documentation, or unrelated files.
+3. Make the minimum code and test changes required.
 
-Preserve existing behavior unless the Issue explicitly requires changing it.
+4. Validate once after the final edit:
+   - run `npm test`;
+   - verify the resulting diff contains only required changes;
+   - verify `git diff --check` succeeds.
 
-After implementation, run exactly:
+5. If validation succeeds, immediately call the configured
+   `create_pull_request` Safe Output.
 
-`npm test`
+## Git rules
 
-Do not run the test suite repeatedly unless a test fails and you subsequently
-change the implementation.
+Do NOT:
 
-Before finishing, verify that the resulting diff contains only changes required
-by the Issue.
+- create or switch branches;
+- run `git add`;
+- run `git commit`;
+- run `git push`;
+- inspect git history;
+- inspect the latest commit after editing;
+- repeatedly inspect git status;
+- re-read files solely to confirm edits already shown by the edit tool.
 
-If every acceptance criterion is satisfied and tests pass, create exactly one
-pull request using the configured Safe Output.
+The `create_pull_request` Safe Output is responsible for staging,
+committing, pushing and creating the pull request.
 
-The pull request must state:
+## Pull request
+
+Create exactly one pull request.
+
+Its body must state:
 
 - what changed;
 - tests executed;
@@ -99,5 +118,5 @@ The pull request must state:
 
 Do not merge the pull request.
 
-If implementation cannot be completed safely within these constraints,
-report the blocker instead of making unrelated changes.
+If implementation or validation fails, report the blocker rather than making
+unrelated changes.
