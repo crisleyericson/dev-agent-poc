@@ -8,4 +8,5 @@ test('add sums two numbers', () => {
 
 test('subtract subtracts two numbers', () => {
   assert.equal(subtract(5, 3), 2);
+  assert.equal(subtract(3, 5), -2);
 });
