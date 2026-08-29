@@ -8,6 +8,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: read
+  actions: write
 
 concurrency:
   group: dev-agent-build-${{ github.event.issue.number }}
@@ -188,6 +189,24 @@ jobs:
               --body-file /tmp/pr-body.md
           )"
 
+          PR_NUMBER="${PR_URL##*/}"
+
           echo "Created PR: $PR_URL"
+          echo "PR number: $PR_NUMBER"
+
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+
           echo "### BUILD result" >> "$GITHUB_STEP_SUMMARY"
           echo "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Trigger REVIEW
+        run: |
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "::error::PR_NUMBER não definido"
+            exit 1
+          fi
+
+          echo "Triggering REVIEW for PR #${PR_NUMBER}"
+
+          gh workflow run dev-agent-review.yml \
+            -f pr_number="${PR_NUMBER}"
