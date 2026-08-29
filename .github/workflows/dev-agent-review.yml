@@ -58,6 +58,17 @@ jobs:
         }
 
     steps:
+      - name: Checkout workflow tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+
+      - name: Prepare OpenCode agent runner
+        run: |
+          cp .github/scripts/run-opencode-agent.sh /tmp/run-opencode-agent.sh
+          chmod +x /tmp/run-opencode-agent.sh
+
       - name: Checkout PR
         uses: actions/checkout@v6
         with:
@@ -139,67 +150,14 @@ jobs:
       - name: Run REVIEW agent
         shell: bash
         run: |
-          set -o pipefail
-
-          MAX_ATTEMPTS=3
-
-          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
-            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
-              REVIEW_MODEL="omniroute/review-combo"
-            else
-              REVIEW_MODEL="omniroute/deep-combo"
-            fi
-
-            echo "REVIEW attempt ${ATTEMPT}/${MAX_ATTEMPTS} using ${REVIEW_MODEL}"
-
-            ATTEMPT_LOG="/tmp/opencode-review-attempt-${ATTEMPT}.jsonl"
-            ATTEMPT_ERR="/tmp/opencode-review-attempt-${ATTEMPT}.stderr"
-            rm -f "$ATTEMPT_LOG" "$ATTEMPT_ERR"
-
-            set +e
-            timeout --signal=TERM --kill-after=15s 180 \
-              opencode run \
-                --model "$REVIEW_MODEL" \
-                --format json \
-                "$(cat /tmp/review-prompt.txt)" \
-              2> >(tee "$ATTEMPT_ERR" >&2) \
-              | tee "$ATTEMPT_LOG"
-
-            EXIT_CODE=${PIPESTATUS[0]}
-            set -e
-
-            if [ "$EXIT_CODE" -eq 0 ]; then
-              cp "$ATTEMPT_LOG" /tmp/opencode-review.jsonl
-              echo "REVIEW attempt ${ATTEMPT} succeeded."
-              exit 0
-            fi
-
-            RETRY_REASON=""
-
-            if [ "$EXIT_CODE" -eq 124 ]; then
-              RETRY_REASON="TIMEOUT"
-            elif grep -Eiq \
-              '(^|[^0-9])(429|502|503|504)([^0-9]|$)|busy|capacity|rate[ _-]?limit' \
-              "$ATTEMPT_LOG" "$ATTEMPT_ERR"; then
-              RETRY_REASON="TRANSIENT_PROVIDER"
-            fi
-
-            if [ -z "$RETRY_REASON" ]; then
-              echo "ERROR: REVIEW failed with non-transient exit code ${EXIT_CODE}."
-              exit "$EXIT_CODE"
-            fi
-
-            echo "REVIEW attempt ${ATTEMPT} failed: ${RETRY_REASON} (exit code ${EXIT_CODE})."
-
-            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
-              BACKOFF=$((ATTEMPT * 15))
-              echo "Retrying in ${BACKOFF}s..."
-              sleep "$BACKOFF"
-            fi
-          done
-
-          echo "ERROR: REVIEW failed after ${MAX_ATTEMPTS} attempts."
-          exit 1
+          /tmp/run-opencode-agent.sh \
+            --stage REVIEW \
+            --prompt /tmp/review-prompt.txt \
+            --output /tmp/opencode-review.jsonl \
+            --model omniroute/review-combo \
+            --fallback-model omniroute/deep-combo \
+            --timeout 180 \
+            --attempts 3
 
       - name: Parse REVIEW result
         run: |
