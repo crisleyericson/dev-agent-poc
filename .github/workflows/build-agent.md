@@ -20,7 +20,7 @@ models:
     input: 0.000001
     output: 0.000001
 
-max-turns: 8
+max-turns: 12
 timeout-minutes: 10
 
 tools:
