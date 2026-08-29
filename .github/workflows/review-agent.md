@@ -127,6 +127,21 @@ Submit exactly one pull request review using the configured
 
 The review event must be `COMMENT`.
 
+Submit the review by piping the final JSON directly to the Safe Output CLI.
+
+Do not create a temporary JSON file.
+Do not use `cat` redirection, Python, jq, or another helper to construct the payload.
+Do not call `--help` to rediscover the schema.
+
+Use exactly these payload fields:
+- `event`: `COMMENT`
+- `pull_request_number`: `${{ github.event.pull_request.number }}`
+- `body`: the complete review body
+
+Pipe the JSON directly using `printf` into:
+
+`safeoutputs submit_pull_request_review .`
+
 The first line of the review body must be exactly one of:
 
 `STATUS: APPROVED`
