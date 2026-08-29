@@ -18,7 +18,7 @@ jobs:
     if: github.event.label.name == 'agent-build-v3'
 
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     env:
       OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
@@ -99,13 +99,16 @@ jobs:
           } > /tmp/build-prompt.txt
 
       - name: Run BUILD agent
+        shell: bash
         run: |
-          timeout 300 \
+          set -o pipefail
+
+          timeout --signal=TERM --kill-after=15s 600 \
             opencode run \
               --model omniroute/build-combo \
               --format json \
               "$(cat /tmp/build-prompt.txt)" \
-            | tee opencode-build.jsonl
+            | tee /tmp/opencode-build.jsonl
 
       - name: Validate changed files
         run: |
