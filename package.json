@@ -1,0 +1,8 @@
+{
+  "name": "dev-agent-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
