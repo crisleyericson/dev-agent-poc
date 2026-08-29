@@ -138,12 +138,40 @@ jobs:
         run: |
           set -o pipefail
 
-          timeout --signal=TERM --kill-after=15s 600 \
-            opencode run \
-              --model omniroute/review-combo \
-              --format json \
-              "$(cat /tmp/review-prompt.txt)" \
-            | tee /tmp/opencode-review.jsonl
+          MAX_ATTEMPTS=3
+
+          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo "REVIEW attempt ${ATTEMPT}/${MAX_ATTEMPTS}"
+
+            ATTEMPT_LOG="/tmp/opencode-review-attempt-${ATTEMPT}.jsonl"
+            rm -f "$ATTEMPT_LOG"
+
+            set +e
+            timeout --signal=TERM --kill-after=15s 180               opencode run                 --model omniroute/review-combo                 --format json                 "$(cat /tmp/review-prompt.txt)"               | tee "$ATTEMPT_LOG"
+            EXIT_CODE=$?
+            set -e
+
+            if [ "$EXIT_CODE" -eq 0 ]; then
+              cp "$ATTEMPT_LOG" /tmp/opencode-review.jsonl
+              echo "REVIEW attempt ${ATTEMPT} succeeded."
+              exit 0
+            fi
+
+            if [ "$EXIT_CODE" -eq 124 ]; then
+              echo "REVIEW attempt ${ATTEMPT} timed out after 180s."
+            else
+              echo "REVIEW attempt ${ATTEMPT} failed with exit code ${EXIT_CODE}."
+            fi
+
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              BACKOFF=$((ATTEMPT * 15))
+              echo "Retrying in ${BACKOFF}s..."
+              sleep "$BACKOFF"
+            fi
+          done
+
+          echo "ERROR: REVIEW failed after ${MAX_ATTEMPTS} attempts."
+          exit 1
 
       - name: Parse REVIEW result
         run: |
