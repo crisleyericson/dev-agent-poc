@@ -71,6 +71,11 @@ jobs:
           npm install --global opencode-ai@1.18.23
           opencode --version
 
+      - name: Prepare OpenCode agent runner
+        run: |
+          cp .github/scripts/run-opencode-agent.sh /tmp/run-opencode-agent.sh
+          chmod +x /tmp/run-opencode-agent.sh
+
       - name: Load PR context
         run: |
           PR_BRANCH="$(
@@ -159,7 +164,7 @@ jobs:
       - name: Run FIX agent
         shell: bash
         run: |
-          .github/scripts/run-opencode-agent.sh \
+          /tmp/run-opencode-agent.sh \
             --stage FIX \
             --prompt /tmp/fix-prompt.txt \
             --output /tmp/opencode-fix.jsonl \
