@@ -1,0 +1,226 @@
+name: Dev Agent FIX POC
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+  actions: write
+
+concurrency:
+  group: dev-agent-fix-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+
+      OPENCODE_CONFIG_CONTENT: >-
+        {
+          "$schema": "https://opencode.ai/config.json",
+          "autoupdate": false,
+          "provider": {
+            "omniroute": {
+              "npm": "@ai-sdk/openai-compatible",
+              "name": "OmniRoute",
+              "options": {
+                "baseURL": "https://omniroute-cvr6.srv1921690.hstgr.cloud/v1",
+                "apiKey": "{env:OMNIROUTE_API_KEY}"
+              },
+              "models": {
+                "build-combo": {
+                  "name": "Build Combo"
+                }
+              }
+            }
+          },
+          "permission": {
+            "*": "deny",
+            "read": "allow",
+            "glob": "allow",
+            "grep": "allow",
+            "edit": {
+              "*": "deny",
+              "src/**": "allow",
+              "test/**": "allow"
+            }
+          }
+        }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install OpenCode
+        run: |
+          npm install --global opencode-ai@1.18.23
+          opencode --version
+
+      - name: Load PR context
+        run: |
+          PR_BRANCH="$(
+            gh pr view "$PR_NUMBER" \
+              --json headRefName \
+              --jq '.headRefName'
+          )"
+
+          ISSUE_NUMBER="$(
+            gh pr view "$PR_NUMBER" \
+              --json body \
+              --jq '.body' |
+              sed -nE 's/.*Source issue: #([0-9]+).*/\1/p' |
+              head -n 1
+          )"
+
+          if [ -z "$PR_BRANCH" ]; then
+            echo "ERROR: Could not determine PR branch."
+            exit 1
+          fi
+
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "ERROR: Could not determine source issue."
+            exit 1
+          fi
+
+          gh issue view "$ISSUE_NUMBER" \
+            --json title,body \
+            --jq '"Title: \(.title)\n\n\(.body)"' \
+            > /tmp/issue.txt
+
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '
+              [.[] |
+                select(.body | startswith("## Agent REVIEW"))
+              ] |
+              last |
+              .body
+            ' > /tmp/review.txt
+
+          if ! grep -q 'REVIEW_STATUS: CHANGES_REQUESTED' /tmp/review.txt; then
+            echo "ERROR: Latest Agent REVIEW is not CHANGES_REQUESTED."
+            cat /tmp/review.txt
+            exit 1
+          fi
+
+          echo "PR_BRANCH=$PR_BRANCH" >> "$GITHUB_ENV"
+          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Checkout PR branch
+        run: |
+          git fetch origin "$PR_BRANCH"
+          git switch -C "$PR_BRANCH" "origin/$PR_BRANCH"
+
+      - name: Prepare FIX prompt
+        run: |
+          {
+            echo '# FIX'
+            echo
+            echo 'Fix the implementation according to the review findings.'
+            echo
+            echo '## Source Issue'
+            echo
+            cat /tmp/issue.txt
+            echo
+            echo '## Review requiring changes'
+            echo
+            cat /tmp/review.txt
+            echo
+            echo '## Rules'
+            echo
+            echo '- Inspect only files necessary for the fix.'
+            echo '- Address every material review finding.'
+            echo '- Make the minimum changes required.'
+            echo '- Add or adjust tests when the review identifies missing coverage.'
+            echo '- Modify only files under src/** and test/**.'
+            echo '- Do not modify workflows, configuration, documentation, or unrelated files.'
+            echo '- Do not run shell commands.'
+            echo '- Do not use git.'
+            echo '- Do not commit.'
+            echo '- Do not push.'
+            echo '- Git operations and validation are handled externally.'
+          } > /tmp/fix-prompt.txt
+
+      - name: Run FIX agent
+        shell: bash
+        run: |
+          set -o pipefail
+
+          timeout --signal=TERM --kill-after=15s 600 \
+            opencode run \
+              --model omniroute/build-combo \
+              --format json \
+              "$(cat /tmp/fix-prompt.txt)" \
+            | tee /tmp/opencode-fix.jsonl
+
+      - name: Validate changed files
+        run: |
+          {
+            git diff --name-only
+            git ls-files --others --exclude-standard
+          } | sort -u > /tmp/changed-files.txt
+
+          echo "FIX changed files:"
+          cat /tmp/changed-files.txt
+
+          if [ ! -s /tmp/changed-files.txt ]; then
+            echo "ERROR: FIX produced no file changes."
+            exit 1
+          fi
+
+          INVALID_FILES="$(
+            grep -Ev '^(src/|test/)' /tmp/changed-files.txt || true
+          )"
+
+          if [ -n "$INVALID_FILES" ]; then
+            echo "ERROR: FIX modified forbidden files:"
+            echo "$INVALID_FILES"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          npm test
+
+      - name: Validate diff
+        run: |
+          git diff --check
+          git diff
+
+      - name: Commit FIX to same PR
+        run: |
+          git config user.name "dev-agent-bot"
+          git config user.email "dev-agent-bot@users.noreply.github.com"
+
+          git add --all -- src test
+          git commit -m "fix: address review for issue #${ISSUE_NUMBER}"
+
+          git push origin HEAD:"$PR_BRANCH"
+
+      - name: Comment FIX result
+        run: |
+          gh pr comment "$PR_NUMBER" \
+            --body "Automated FIX completed and validated. A new independent REVIEW will be started."
+
+      - name: Trigger REVIEW
+        run: |
+          gh workflow run dev-agent-review.yml \
+            --ref main \
+            -f pr_number="$PR_NUMBER"
+
+          echo "Triggered REVIEW for PR #${PR_NUMBER}."
