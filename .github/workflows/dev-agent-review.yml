@@ -162,11 +162,12 @@ jobs:
               exit 0
             fi
 
-            if [ "$EXIT_CODE" -eq 124 ]; then
-              echo "REVIEW attempt ${ATTEMPT} timed out after 180s."
-            else
-              echo "REVIEW attempt ${ATTEMPT} failed with exit code ${EXIT_CODE}."
+            if [ "$EXIT_CODE" -ne 124 ]; then
+              echo "ERROR: REVIEW failed with exit code ${EXIT_CODE}."
+              exit "$EXIT_CODE"
             fi
+
+            echo "REVIEW attempt ${ATTEMPT} timed out after 180s."
 
             if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
               BACKOFF=$((ATTEMPT * 15))
