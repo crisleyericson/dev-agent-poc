@@ -1,12 +1,11 @@
 ---
 on:
-  slash_command:
-    name: build
-    events: [issues, issue_comment]
+  label_command:
+    name: agent-build
+    events: [issues]
 
 permissions:
   contents: read
-  issues: read
 
 engine:
   id: copilot
@@ -21,48 +20,84 @@ models:
     input: 0.000001
     output: 0.000001
 
+max-turns: 8
+timeout-minutes: 10
+
 tools:
+  timeout: 180
+
   edit:
+
+  cli-proxy: true
+
   bash:
-    - "git:*"
-    - "node:*"
-    - "npm:*"
-    - "cat"
-    - "ls"
-    - "pwd"
-  github:
-    toolsets: [repos, issues]
+    - "npm test"
+    - "git status"
+    - "git status:*"
+    - "git diff"
+    - "git diff:*"
+    - "safeoutputs:*"
 
 network:
   allowed:
     - defaults
-    - node
     - omniroute-cvr6.srv1921690.hstgr.cloud
 
 safe-outputs:
   create-pull-request:
+    max: 1
     title-prefix: "[agent] "
-    protected-files: fallback-to-issue
+    fallback-as-issue: false
+    protected-files: blocked
     allowed-files:
       - "src/**"
       - "test/**"
-      - "package.json"
 ---
 
-Implement the task described in the triggering GitHub issue.
+# BUILD
 
-Requirements:
+Implement the GitHub Issue below.
 
-1. Read the complete issue and its acceptance criteria.
-2. Inspect the existing repository before changing anything.
-3. Make only the changes required by the issue.
-4. Run the existing test suite with `npm test`.
-5. Do not modify files outside the allowed application files.
-6. Do not modify GitHub workflows.
-7. Do not merge anything.
-8. If implementation and tests succeed, create a pull request using the configured safe output.
-9. The pull request must explain:
-   - what changed;
-   - which tests were executed;
-   - whether all acceptance criteria were satisfied.
-10. If the task cannot be completed safely, report the blocker instead of inventing a solution.
+The Task section is the complete canonical requirement.
+Do not query GitHub to rediscover the Issue.
+
+## Task
+
+${{ steps.sanitized.outputs.text }}
+
+## Rules
+
+Inspect only repository files needed to implement the task.
+
+Prefer the built-in file inspection and edit tools over shell commands.
+
+Make only changes required by the acceptance criteria.
+
+Do not modify workflows, configuration, dependencies, package manifests,
+documentation, or unrelated files.
+
+Preserve existing behavior unless the Issue explicitly requires changing it.
+
+After implementation, run exactly:
+
+`npm test`
+
+Do not run the test suite repeatedly unless a test fails and you subsequently
+change the implementation.
+
+Before finishing, verify that the resulting diff contains only changes required
+by the Issue.
+
+If every acceptance criterion is satisfied and tests pass, create exactly one
+pull request using the configured Safe Output.
+
+The pull request must state:
+
+- what changed;
+- tests executed;
+- acceptance criteria satisfied.
+
+Do not merge the pull request.
+
+If implementation cannot be completed safely within these constraints,
+report the blocker instead of making unrelated changes.
