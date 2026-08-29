@@ -1,0 +1,195 @@
+name: Dev Agent REVIEW POC
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: dev-agent-review-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+
+      OPENCODE_CONFIG_CONTENT: >-
+        {
+          "$schema": "https://opencode.ai/config.json",
+          "autoupdate": false,
+          "provider": {
+            "omniroute": {
+              "npm": "@ai-sdk/openai-compatible",
+              "name": "OmniRoute",
+              "options": {
+                "baseURL": "https://omniroute-cvr6.srv1921690.hstgr.cloud/v1",
+                "apiKey": "{env:OMNIROUTE_API_KEY}"
+              },
+              "models": {
+                "review-combo": {
+                  "name": "Review Combo"
+                }
+              }
+            }
+          },
+          "permission": {
+            "*": "deny",
+            "read": "allow",
+            "glob": "allow",
+            "grep": "allow"
+          }
+        }
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+        with:
+          ref: refs/pull/${{ inputs.pr_number }}/head
+          fetch-depth: 1
+
+      - name: Install OpenCode
+        run: |
+          npm install --global opencode-ai@1.18.23
+          opencode --version
+
+      - name: Load PR and Issue context
+        run: |
+          gh pr view "$PR_NUMBER" \
+            --json title,body,baseRefName,headRefName \
+            --jq '"Title: \(.title)\nBase: \(.baseRefName)\nHead: \(.headRefName)\n\nBody:\n\(.body)"' \
+            > /tmp/pr.txt
+
+          gh pr diff "$PR_NUMBER" > /tmp/pr.diff
+
+          ISSUE_NUMBER="$(
+            gh pr view "$PR_NUMBER" --json body --jq '.body' |
+              sed -nE 's/.*Source issue: #([0-9]+).*/\1/p' |
+              head -n 1
+          )"
+
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "ERROR: Could not determine source issue."
+            exit 1
+          fi
+
+          gh issue view "$ISSUE_NUMBER" \
+            --json title,body \
+            --jq '"Title: \(.title)\n\n\(.body)"' \
+            > /tmp/issue.txt
+
+          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Prepare REVIEW prompt
+        run: |
+          {
+            echo '# REVIEW'
+            echo
+            echo 'Review the implementation in this pull request independently.'
+            echo
+            echo '## Source Issue'
+            echo
+            cat /tmp/issue.txt
+            echo
+            echo '## Pull Request'
+            echo
+            cat /tmp/pr.txt
+            echo
+            echo '## Diff'
+            echo
+            cat /tmp/pr.diff
+            echo
+            echo '## Review rules'
+            echo
+            echo '- Verify every acceptance criterion.'
+            echo '- Check correctness, regressions, and test adequacy.'
+            echo '- Inspect repository files only when necessary.'
+            echo '- Do not modify any file.'
+            echo '- Do not run shell commands.'
+            echo '- Do not use git.'
+            echo '- Do not create commits or push.'
+            echo '- APPROVED only when there is no material issue.'
+            echo '- CHANGES_REQUESTED when an actionable defect must be fixed.'
+            echo '- BLOCKED only when there is insufficient evidence to review.'
+            echo
+            echo 'Your final response MUST start with exactly one of:'
+            echo 'REVIEW_STATUS: APPROVED'
+            echo 'REVIEW_STATUS: CHANGES_REQUESTED'
+            echo 'REVIEW_STATUS: BLOCKED'
+            echo
+            echo 'Then provide a concise review summary and findings.'
+          } > /tmp/review-prompt.txt
+
+      - name: Run REVIEW agent
+        shell: bash
+        run: |
+          set -o pipefail
+
+          timeout --signal=TERM --kill-after=15s 600 \
+            opencode run \
+              --model omniroute/review-combo \
+              --format json \
+              "$(cat /tmp/review-prompt.txt)" \
+            | tee /tmp/opencode-review.jsonl
+
+      - name: Parse REVIEW result
+        run: |
+          jq -r '
+            select(.type == "text" and .part.type == "text")
+            | .part.text
+          ' /tmp/opencode-review.jsonl > /tmp/review.txt
+
+          echo "Reviewer output:"
+          cat /tmp/review.txt
+
+          REVIEW_STATUS="$(
+            grep -E '^REVIEW_STATUS: (APPROVED|CHANGES_REQUESTED|BLOCKED)$' \
+              /tmp/review.txt |
+              tail -n 1 |
+              sed 's/^REVIEW_STATUS: //'
+          )"
+
+          case "$REVIEW_STATUS" in
+            APPROVED|CHANGES_REQUESTED|BLOCKED)
+              ;;
+            *)
+              echo "ERROR: Invalid or missing REVIEW_STATUS."
+              exit 1
+              ;;
+          esac
+
+          echo "REVIEW_STATUS=$REVIEW_STATUS" >> "$GITHUB_ENV"
+          echo "Parsed REVIEW_STATUS=$REVIEW_STATUS"
+
+      - name: Persist REVIEW on PR
+        run: |
+          {
+            echo '## Agent REVIEW'
+            echo
+            echo "**Status: ${REVIEW_STATUS}**"
+            echo
+            cat /tmp/review.txt
+            echo
+            echo '---'
+            echo "Source issue: #${ISSUE_NUMBER}"
+            echo "Review run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > /tmp/review-comment.md
+
+          gh pr comment "$PR_NUMBER" --body-file /tmp/review-comment.md
+
+          echo "### REVIEW result" >> "$GITHUB_STEP_SUMMARY"
+          echo "PR: #${PR_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Status: ${REVIEW_STATUS}" >> "$GITHUB_STEP_SUMMARY"
