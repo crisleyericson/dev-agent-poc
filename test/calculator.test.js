@@ -12,4 +12,5 @@ test('divide divides two numbers', () => {
 
 test('divide divides negative numbers', () => {
   assert.equal(divide(-12, 3), -4);
+  assert.equal(divide(12, -3), -4);
 });
