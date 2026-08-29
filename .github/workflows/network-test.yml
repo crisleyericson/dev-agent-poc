@@ -1,0 +1,29 @@
+name: Network Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: DNS
+        run: |
+          getent ahosts omniroute-cvr6.srv1921690.hstgr.cloud
+
+      - name: Test IPv4
+        run: |
+          curl -4 -sv \
+            --connect-timeout 10 \
+            --max-time 20 \
+            https://omniroute-cvr6.srv1921690.hstgr.cloud/ \
+            -o /dev/null
+
+      - name: Test IPv6
+        continue-on-error: true
+        run: |
+          curl -6 -sv \
+            --connect-timeout 10 \
+            --max-time 20 \
+            https://omniroute-cvr6.srv1921690.hstgr.cloud/ \
+            -o /dev/null
