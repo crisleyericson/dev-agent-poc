@@ -1,0 +1,62 @@
+name: OpenCode OmniRoute Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 5
+
+    env:
+      OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
+
+      OPENCODE_CONFIG_CONTENT: >-
+        {
+          "$schema": "https://opencode.ai/config.json",
+          "autoupdate": false,
+          "provider": {
+            "omniroute": {
+              "npm": "@ai-sdk/openai-compatible",
+              "name": "OmniRoute",
+              "options": {
+                "baseURL": "https://omniroute-cvr6.srv1921690.hstgr.cloud/v1",
+                "apiKey": "{env:OMNIROUTE_API_KEY}"
+              },
+              "models": {
+                "build-combo": {
+                  "name": "Build Combo"
+                }
+              }
+            }
+          },
+          "permission": {
+            "*": "deny"
+          }
+        }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install OpenCode
+        run: |
+          npm install --global opencode-ai@1.18.23
+          opencode --version
+
+      - name: Test OmniRoute through OpenCode
+        run: |
+          timeout 180 \
+            opencode run \
+              --model omniroute/build-combo \
+              --format json \
+              "Do not use tools. Respond exactly with: OPENCODE_OMNIROUTE_OK" \
+            | tee opencode-smoke.jsonl
+
+      - name: Assert response
+        run: |
+          grep -q 'OPENCODE_OMNIROUTE_OK' opencode-smoke.jsonl
