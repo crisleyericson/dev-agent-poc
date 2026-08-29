@@ -144,7 +144,8 @@ jobs:
             echo "REVIEW attempt ${ATTEMPT}/${MAX_ATTEMPTS}"
 
             ATTEMPT_LOG="/tmp/opencode-review-attempt-${ATTEMPT}.jsonl"
-            rm -f "$ATTEMPT_LOG"
+            ATTEMPT_ERR="/tmp/opencode-review-attempt-${ATTEMPT}.stderr"
+            rm -f "$ATTEMPT_LOG" "$ATTEMPT_ERR"
 
             set +e
             timeout --signal=TERM --kill-after=15s 180 \
@@ -152,8 +153,10 @@ jobs:
                 --model omniroute/review-combo \
                 --format json \
                 "$(cat /tmp/review-prompt.txt)" \
+              2> >(tee "$ATTEMPT_ERR" >&2) \
               | tee "$ATTEMPT_LOG"
-            EXIT_CODE=$?
+
+            EXIT_CODE=${PIPESTATUS[0]}
             set -e
 
             if [ "$EXIT_CODE" -eq 0 ]; then
@@ -162,12 +165,22 @@ jobs:
               exit 0
             fi
 
-            if [ "$EXIT_CODE" -ne 124 ]; then
-              echo "ERROR: REVIEW failed with exit code ${EXIT_CODE}."
+            RETRY_REASON=""
+
+            if [ "$EXIT_CODE" -eq 124 ]; then
+              RETRY_REASON="TIMEOUT"
+            elif grep -Eiq \
+              '(^|[^0-9])(429|502|503|504)([^0-9]|$)|busy|capacity|rate[ _-]?limit' \
+              "$ATTEMPT_LOG" "$ATTEMPT_ERR"; then
+              RETRY_REASON="TRANSIENT_PROVIDER"
+            fi
+
+            if [ -z "$RETRY_REASON" ]; then
+              echo "ERROR: REVIEW failed with non-transient exit code ${EXIT_CODE}."
               exit "$EXIT_CODE"
             fi
 
-            echo "REVIEW attempt ${ATTEMPT} timed out after 180s."
+            echo "REVIEW attempt ${ATTEMPT} failed: ${RETRY_REASON} (exit code ${EXIT_CODE})."
 
             if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
               BACKOFF=$((ATTEMPT * 15))
