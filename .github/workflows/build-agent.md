@@ -69,6 +69,8 @@ ${{ steps.sanitized.outputs.text }}
 
 Work directly in the checked-out repository.
 
+Create the implementation branch before making the first edit.
+
 1. Identify only the files needed for this task.
    - If the task names a file explicitly, open it directly.
    - Do not repeatedly search the repository.
@@ -87,24 +89,27 @@ Work directly in the checked-out repository.
    - verify the resulting diff contains only required changes;
    - verify `git diff --check` succeeds.
 
-5. If validation succeeds, immediately call the configured
-   `create_pull_request` Safe Output.
+5. If validation succeeds:
+   - stage only the required files;
+   - create exactly one local commit;
+   - immediately call the configured `create_pull_request` Safe Output.
 
 ## Git rules
 
-Do NOT:
+Do not push directly to GitHub.
 
-- create or switch branches;
-- run `git add`;
-- run `git commit`;
-- run `git push`;
-- inspect git history;
-- inspect the latest commit after editing;
+
+Do not:
+
+- modify or commit unrelated files;
+- inspect git history unless required by the task;
 - repeatedly inspect git status;
+- push with `git push`;
+- merge anything;
 - re-read files solely to confirm edits already shown by the edit tool.
 
-The `create_pull_request` Safe Output is responsible for staging,
-committing, pushing and creating the pull request.
+The Safe Output is responsible for safely publishing the committed branch and
+creating the pull request.
 
 ## Pull request
 
