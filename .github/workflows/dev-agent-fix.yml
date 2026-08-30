@@ -77,6 +77,7 @@ jobs:
           chmod +x /tmp/run-opencode-agent.sh
 
       - name: Load PR context
+        id: load_pr_context
         run: |
           PR_BRANCH="$(
             gh pr view "$PR_NUMBER" \
@@ -127,11 +128,13 @@ jobs:
           echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
 
       - name: Checkout PR branch
+        id: checkout_pr_branch
         run: |
           git fetch origin "$PR_BRANCH"
           git switch -C "$PR_BRANCH" "origin/$PR_BRANCH"
 
       - name: Prepare FIX prompt
+        id: prepare_fix_prompt
         run: |
           {
             echo '# FIX'
@@ -162,6 +165,8 @@ jobs:
           } > /tmp/fix-prompt.txt
 
       - name: Run FIX agent
+        id: fix_agent
+        continue-on-error: true
         shell: bash
         run: |
           /tmp/run-opencode-agent.sh \
@@ -173,6 +178,9 @@ jobs:
             --attempts 3
 
       - name: Validate changed files
+        if: steps.fix_agent.outcome == 'success'
+        id: validate_changed_files
+        continue-on-error: true
         run: |
           {
             git diff --name-only
@@ -198,15 +206,24 @@ jobs:
           fi
 
       - name: Run tests
+        if: steps.fix_agent.outcome == 'success' && steps.validate_changed_files.outcome == 'success'
+        id: run_tests
+        continue-on-error: true
         run: |
           npm test
 
       - name: Validate diff
+        if: steps.fix_agent.outcome == 'success' && steps.validate_changed_files.outcome == 'success' && steps.run_tests.outcome == 'success'
+        id: validate_diff
+        continue-on-error: true
         run: |
           git diff --check
           git diff
 
       - name: Commit FIX to same PR
+        if: steps.fix_agent.outcome == 'success' && steps.validate_changed_files.outcome == 'success' && steps.run_tests.outcome == 'success' && steps.validate_diff.outcome == 'success'
+        id: commit_fix
+        continue-on-error: true
         run: |
           git config user.name "dev-agent-bot"
           git config user.email "dev-agent-bot@users.noreply.github.com"
@@ -217,15 +234,47 @@ jobs:
           git push origin HEAD:"$PR_BRANCH"
 
       - name: Comment FIX result
+        if: steps.fix_agent.outcome == 'success' && steps.validate_changed_files.outcome == 'success' && steps.run_tests.outcome == 'success' && steps.validate_diff.outcome == 'success' && steps.commit_fix.outcome == 'success'
         run: |
           gh pr comment "$PR_NUMBER" \
             --body "Automated FIX completed and validated. A new independent REVIEW will be started."
 
       - name: Persist FIX pipeline status
+        if: always()
         shell: bash
         run: |
           FIX_RUN="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          PIPELINE_STATUS="NEEDS_HUMAN"
+          REASON="FIX did not complete before triggering REVIEW"
+
+          if [ "${{ steps.load_pr_context.outcome }}" = "failure" ]; then
+            REASON="Failed to load PR context"
+          elif [ "${{ steps.checkout_pr_branch.outcome }}" = "failure" ]; then
+            REASON="Failed to checkout PR branch"
+          elif [ "${{ steps.prepare_fix_prompt.outcome }}" = "failure" ]; then
+            REASON="Failed to prepare FIX prompt"
+          elif [ "${{ steps.fix_agent.outcome }}" = "failure" ]; then
+            REASON="OpenCode FIX failed after configured retries"
+          elif [ "${{ steps.validate_changed_files.outcome }}" = "failure" ]; then
+            REASON="FIX changed-file validation failed"
+          elif [ "${{ steps.run_tests.outcome }}" = "failure" ]; then
+            REASON="FIX tests failed"
+          elif [ "${{ steps.validate_diff.outcome }}" = "failure" ]; then
+            REASON="FIX diff validation failed"
+          elif [ "${{ steps.commit_fix.outcome }}" = "failure" ]; then
+            REASON="FIX commit or push failed"
+          elif [ "${{ steps.load_pr_context.outcome }}" = "success" ] &&
+            [ "${{ steps.checkout_pr_branch.outcome }}" = "success" ] &&
+            [ "${{ steps.prepare_fix_prompt.outcome }}" = "success" ] &&
+            [ "${{ steps.fix_agent.outcome }}" = "success" ] &&
+            [ "${{ steps.validate_changed_files.outcome }}" = "success" ] &&
+            [ "${{ steps.run_tests.outcome }}" = "success" ] &&
+            [ "${{ steps.validate_diff.outcome }}" = "success" ] &&
+            [ "${{ steps.commit_fix.outcome }}" = "success" ]; then
+            PIPELINE_STATUS="RUNNING"
+            REASON=""
+          fi
 
           COMMENT_ID="$(
             gh api --paginate \
@@ -239,6 +288,7 @@ jobs:
           BUILD_RUN="unknown"
           REVIEW_RUN="unknown"
           FIX_RUNS="none"
+          SOURCE_ISSUE="unknown"
 
           if [ -n "$COMMENT_ID" ]; then
             EXISTING_BODY="$(
@@ -265,6 +315,12 @@ jobs:
                 head -n 1
             )"
 
+            EXISTING_SOURCE_ISSUE="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^SOURCE_ISSUE: //p' |
+                head -n 1
+            )"
+
             if [ -n "$EXISTING_BUILD_RUN" ]; then
               BUILD_RUN="$EXISTING_BUILD_RUN"
             fi
@@ -276,6 +332,14 @@ jobs:
             if [ -n "$EXISTING_FIX_RUNS" ]; then
               FIX_RUNS="$EXISTING_FIX_RUNS"
             fi
+
+            if [ -n "$EXISTING_SOURCE_ISSUE" ]; then
+              SOURCE_ISSUE="$EXISTING_SOURCE_ISSUE"
+            fi
+          fi
+
+          if [ -n "${ISSUE_NUMBER:-}" ]; then
+            SOURCE_ISSUE="#${ISSUE_NUMBER}"
           fi
 
           case "$FIX_RUNS" in
@@ -299,9 +363,9 @@ jobs:
             echo
             echo '## Dev Agent Pipeline'
             echo
-            echo '**PIPELINE_STATUS: RUNNING**'
+            echo "**PIPELINE_STATUS: ${PIPELINE_STATUS}**"
             echo
-            echo "SOURCE_ISSUE: #${ISSUE_NUMBER}"
+            echo "SOURCE_ISSUE: ${SOURCE_ISSUE}"
             echo "BUILD_RUN: ${BUILD_RUN}"
             echo "REVIEW_RUN: ${REVIEW_RUN}"
             echo "FIX_RUNS: ${FIX_RUNS}"
@@ -309,6 +373,9 @@ jobs:
             echo
             echo "LAST_STAGE: FIX"
             echo "LAST_REVIEW_STATUS: CHANGES_REQUESTED"
+            if [ -n "$REASON" ]; then
+              echo "REASON: ${REASON}"
+            fi
             echo "UPDATED_AT: ${UPDATED_AT}"
           } > /tmp/pipeline-status.md
 
@@ -333,13 +400,139 @@ jobs:
               --input /tmp/pipeline-status.json
           fi
 
-          echo "Pipeline status: RUNNING" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pipeline status: ${PIPELINE_STATUS}" >> "$GITHUB_STEP_SUMMARY"
           echo "Fix run: ${FIX_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$REASON" ]; then
+            echo "Reason: ${REASON}" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Trigger REVIEW
+        id: trigger_review
+        if: steps.fix_agent.outcome == 'success' && steps.validate_changed_files.outcome == 'success' && steps.run_tests.outcome == 'success' && steps.validate_diff.outcome == 'success' && steps.commit_fix.outcome == 'success'
+        continue-on-error: true
         run: |
           gh workflow run dev-agent-review.yml \
             --ref main \
             -f pr_number="$PR_NUMBER"
 
           echo "Triggered REVIEW for PR #${PR_NUMBER}."
+
+      - name: Persist REVIEW trigger failure
+        if: steps.trigger_review.outcome == 'failure'
+        shell: bash
+        run: |
+          UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          COMMENT_ID="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq '.[] |
+                select(.body | contains("<!-- dev-agent-pipeline-status -->")) |
+                .id' |
+              head -n 1
+          )"
+
+          BUILD_RUN="unknown"
+          REVIEW_RUN="unknown"
+          FIX_RUNS="none"
+          SOURCE_ISSUE="unknown"
+
+          if [ -n "$COMMENT_ID" ]; then
+            EXISTING_BODY="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+                --jq '.body'
+            )"
+
+            EXISTING_SOURCE_ISSUE="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^SOURCE_ISSUE: //p' |
+                head -n 1
+            )"
+
+            EXISTING_BUILD_RUN="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^BUILD_RUN: //p' |
+                head -n 1
+            )"
+
+            EXISTING_REVIEW_RUN="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^REVIEW_RUN: //p' |
+                head -n 1
+            )"
+
+            EXISTING_FIX_RUNS="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^FIX_RUNS: //p' |
+                head -n 1
+            )"
+
+            if [ -n "$EXISTING_SOURCE_ISSUE" ]; then
+              SOURCE_ISSUE="$EXISTING_SOURCE_ISSUE"
+            fi
+
+            if [ -n "$EXISTING_BUILD_RUN" ]; then
+              BUILD_RUN="$EXISTING_BUILD_RUN"
+            fi
+
+            if [ -n "$EXISTING_REVIEW_RUN" ]; then
+              REVIEW_RUN="$EXISTING_REVIEW_RUN"
+            fi
+
+            if [ -n "$EXISTING_FIX_RUNS" ]; then
+              FIX_RUNS="$EXISTING_FIX_RUNS"
+            fi
+          fi
+
+          if [ -n "${ISSUE_NUMBER:-}" ]; then
+            SOURCE_ISSUE="#${ISSUE_NUMBER}"
+          fi
+
+          {
+            echo '<!-- dev-agent-pipeline-status -->'
+            echo
+            echo '## Dev Agent Pipeline'
+            echo
+            echo '**PIPELINE_STATUS: NEEDS_HUMAN**'
+            echo
+            echo "SOURCE_ISSUE: ${SOURCE_ISSUE}"
+            echo "BUILD_RUN: ${BUILD_RUN}"
+            echo "REVIEW_RUN: ${REVIEW_RUN}"
+            echo "FIX_RUNS: ${FIX_RUNS}"
+            echo "PR: #${PR_NUMBER}"
+            echo
+            echo "LAST_STAGE: FIX"
+            echo "LAST_REVIEW_STATUS: CHANGES_REQUESTED"
+            echo "REASON: Failed to trigger REVIEW workflow"
+            echo "UPDATED_AT: ${UPDATED_AT}"
+          } > /tmp/pipeline-status.md
+
+          jq -n \
+            --rawfile body /tmp/pipeline-status.md \
+            '{body: $body}' \
+            > /tmp/pipeline-status.json
+
+          if [ -n "$COMMENT_ID" ]; then
+            echo "Updating pipeline status comment $COMMENT_ID"
+
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              --input /tmp/pipeline-status.json
+          else
+            echo "Creating pipeline status comment"
+
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input /tmp/pipeline-status.json
+          fi
+
+          echo "Pipeline status: NEEDS_HUMAN" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reason: Failed to trigger REVIEW workflow" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail workflow after FIX failure
+        if: always() && (steps.load_pr_context.outcome == 'failure' || steps.checkout_pr_branch.outcome == 'failure' || steps.prepare_fix_prompt.outcome == 'failure' || steps.fix_agent.outcome == 'failure' || steps.validate_changed_files.outcome == 'failure' || steps.run_tests.outcome == 'failure' || steps.validate_diff.outcome == 'failure' || steps.commit_fix.outcome == 'failure' || steps.trigger_review.outcome == 'failure')
+        run: |
+          echo "FIX failed before triggering REVIEW."
+          exit 1

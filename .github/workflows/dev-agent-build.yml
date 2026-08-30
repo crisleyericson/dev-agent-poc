@@ -7,7 +7,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  issues: read
+  issues: write
   actions: write
 
 concurrency:
@@ -100,6 +100,7 @@ jobs:
           } > /tmp/build-prompt.txt
 
       - name: Run BUILD agent
+        id: build_agent
         shell: bash
         run: |
           .github/scripts/run-opencode-agent.sh \
@@ -111,6 +112,7 @@ jobs:
             --attempts 3
 
       - name: Validate changed files
+        id: validate_changed_files
         run: |
           echo "Changed tracked files:"
           git diff --name-only
@@ -139,15 +141,18 @@ jobs:
           fi
 
       - name: Run tests
+        id: run_tests
         run: |
           npm test
 
       - name: Validate diff
+        id: validate_diff
         run: |
           git diff --check
           git diff
 
       - name: Create branch and commit
+        id: create_branch_and_commit
         env:
           BRANCH_NAME: agent-v3/issue-${{ github.event.issue.number }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
@@ -180,6 +185,7 @@ jobs:
           } > /tmp/pr-body.md
 
       - name: Create pull request
+        id: create_pull_request
         run: |
           PR_URL="$(
             gh pr create \
@@ -198,6 +204,78 @@ jobs:
 
           echo "### BUILD result" >> "$GITHUB_STEP_SUMMARY"
           echo "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Persist BUILD failure pipeline status
+        if: failure() && env.PR_NUMBER == ''
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          BUILD_RUN="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          REASON="BUILD failed before PR creation"
+          if [ "${{ steps.build_agent.outcome }}" = "failure" ]; then
+            REASON="OpenCode BUILD failed after configured retries"
+          elif [ "${{ steps.validate_changed_files.outcome }}" = "failure" ]; then
+            REASON="BUILD changed-file validation failed"
+          elif [ "${{ steps.run_tests.outcome }}" = "failure" ]; then
+            REASON="BUILD tests failed"
+          elif [ "${{ steps.validate_diff.outcome }}" = "failure" ]; then
+            REASON="BUILD diff validation failed"
+          elif [ "${{ steps.create_branch_and_commit.outcome }}" = "failure" ]; then
+            REASON="BUILD commit or push failed"
+          elif [ "${{ steps.create_pull_request.outcome }}" = "failure" ]; then
+            REASON="BUILD pull request creation failed"
+          fi
+
+          {
+            echo '<!-- dev-agent-pipeline-status -->'
+            echo
+            echo '## Dev Agent Pipeline'
+            echo
+            echo '**PIPELINE_STATUS: FAILED**'
+            echo
+            echo "SOURCE_ISSUE: #${ISSUE_NUMBER}"
+            echo "BUILD_RUN: ${BUILD_RUN}"
+            echo "REVIEW_RUN: none"
+            echo "FIX_RUNS: none"
+            echo "PR: none"
+            echo
+            echo "LAST_STAGE: BUILD"
+            echo "REASON: ${REASON}"
+            echo "UPDATED_AT: ${UPDATED_AT}"
+          } > /tmp/pipeline-status.md
+
+          COMMENT_ID="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
+              --jq '.[] |
+                select(.body | contains("<!-- dev-agent-pipeline-status -->")) |
+                .id' |
+              head -n 1
+          )"
+
+          jq -n --rawfile body /tmp/pipeline-status.md \
+            '{body: $body}' > /tmp/pipeline-status.json
+
+          if [ -n "$COMMENT_ID" ]; then
+            echo "Updating pipeline status comment on issue #${ISSUE_NUMBER}"
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              --input /tmp/pipeline-status.json
+          else
+            echo "Creating pipeline status comment on issue #${ISSUE_NUMBER}"
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
+              --input /tmp/pipeline-status.json
+          fi
+
+          echo "Pipeline status: FAILED" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build run: ${BUILD_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reason: ${REASON}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Persist BUILD pipeline status
         shell: bash
