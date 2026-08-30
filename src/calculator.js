@@ -3,5 +3,5 @@ export function add(a, b) {
 }
 
 export function absolute(a) {
-  return 0;
+  return Math.abs(a);
 }

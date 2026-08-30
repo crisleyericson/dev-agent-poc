@@ -8,4 +8,6 @@ test('add sums two numbers', () => {
 
 test('absolute returns the absolute value', () => {
   assert.equal(absolute(-5), 5);
+  assert.equal(absolute(5), 5);
+  assert.equal(absolute(0), 0);
 });
