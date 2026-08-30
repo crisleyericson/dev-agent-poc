@@ -199,6 +199,62 @@ jobs:
           echo "### BUILD result" >> "$GITHUB_STEP_SUMMARY"
           echo "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Persist BUILD pipeline status
+        shell: bash
+        run: |
+          BUILD_RUN="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          {
+            echo '<!-- dev-agent-pipeline-status -->'
+            echo
+            echo '## Dev Agent Pipeline'
+            echo
+            echo '**PIPELINE_STATUS: RUNNING**'
+            echo
+            echo "SOURCE_ISSUE: #${ISSUE_NUMBER}"
+            echo "BUILD_RUN: ${BUILD_RUN}"
+            echo "REVIEW_RUN: pending"
+            echo "FIX_RUNS: none"
+            echo "PR: #${PR_NUMBER}"
+            echo
+            echo "LAST_STAGE: BUILD"
+            echo "UPDATED_AT: ${UPDATED_AT}"
+          } > /tmp/pipeline-status.md
+
+          COMMENT_ID="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq '.[] |
+                select(.body | contains("<!-- dev-agent-pipeline-status -->")) |
+                .id' |
+              head -n 1
+          )"
+
+          jq -n \
+            --rawfile body /tmp/pipeline-status.md \
+            '{body: $body}' \
+            > /tmp/pipeline-status.json
+
+          if [ -n "$COMMENT_ID" ]; then
+            echo "Updating pipeline status comment $COMMENT_ID"
+
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              --input /tmp/pipeline-status.json
+          else
+            echo "Creating pipeline status comment"
+
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input /tmp/pipeline-status.json
+          fi
+
+          echo "Pipeline status: RUNNING" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build run: ${BUILD_RUN}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Trigger REVIEW
         run: |
           if [ -z "${PR_NUMBER:-}" ]; then

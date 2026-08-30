@@ -239,6 +239,46 @@ jobs:
           UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           REVIEW_RUN="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
+          COMMENT_ID="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq '.[] |
+                select(.body | contains("<!-- dev-agent-pipeline-status -->")) |
+                .id' |
+              head -n 1
+          )"
+
+          BUILD_RUN="unknown"
+          FIX_RUNS="none"
+
+          if [ -n "$COMMENT_ID" ]; then
+            EXISTING_BODY="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+                --jq '.body'
+            )"
+
+            EXISTING_BUILD_RUN="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^BUILD_RUN: //p' |
+                head -n 1
+            )"
+
+            EXISTING_FIX_RUNS="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^FIX_RUNS: //p' |
+                head -n 1
+            )"
+
+            if [ -n "$EXISTING_BUILD_RUN" ]; then
+              BUILD_RUN="$EXISTING_BUILD_RUN"
+            fi
+
+            if [ -n "$EXISTING_FIX_RUNS" ]; then
+              FIX_RUNS="$EXISTING_FIX_RUNS"
+            fi
+          fi
+
           {
             echo '<!-- dev-agent-pipeline-status -->'
             echo
@@ -247,9 +287,9 @@ jobs:
             echo "**PIPELINE_STATUS: ${PIPELINE_STATUS}**"
             echo
             echo "SOURCE_ISSUE: #${ISSUE_NUMBER}"
-            echo "BUILD_RUN: not tracked yet"
+            echo "BUILD_RUN: ${BUILD_RUN}"
             echo "REVIEW_RUN: ${REVIEW_RUN}"
-            echo "FIX_RUNS: not tracked yet"
+            echo "FIX_RUNS: ${FIX_RUNS}"
             echo "PR: #${PR_NUMBER}"
             echo
             echo "LAST_STAGE: REVIEW"
@@ -261,15 +301,6 @@ jobs:
 
             echo "UPDATED_AT: ${UPDATED_AT}"
           } > /tmp/pipeline-status.md
-
-          COMMENT_ID="$(
-            gh api --paginate \
-              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              --jq '.[] |
-                select(.body | contains("<!-- dev-agent-pipeline-status -->")) |
-                .id' |
-              head -n 1
-          )"
 
           jq -n \
             --rawfile body /tmp/pipeline-status.md \
