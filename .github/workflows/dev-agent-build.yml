@@ -113,20 +113,36 @@ jobs:
 
       - name: Validate changed files
         id: validate_changed_files
+        shell: bash
         run: |
-          echo "Changed tracked files:"
-          git diff --name-only
-
-          echo "Untracked files:"
-          git ls-files --others --exclude-standard
-
           {
             git diff --name-only
             git ls-files --others --exclude-standard
-          } | sort -u > /tmp/changed-files.txt
+          } | sort -u > /tmp/all-changed-files.txt
+
+          echo "All workspace changes:"
+          cat /tmp/all-changed-files.txt
+
+          # Runtime output from the BUILD runner is diagnostic data, not an
+          # implementation change. Ignore only this known artifact; every
+          # other path remains subject to the src/** + test/** guardrail.
+          IGNORED_FILES="$(
+            grep -E '^opencode-build\.jsonl$' /tmp/all-changed-files.txt || true
+          )"
+
+          grep -Ev '^opencode-build\.jsonl$' \
+            /tmp/all-changed-files.txt > /tmp/changed-files.txt || true
+
+          if [ -n "$IGNORED_FILES" ]; then
+            echo "Ignored BUILD runtime artifacts:"
+            printf '%s\n' "$IGNORED_FILES"
+          fi
+
+          echo "Implementation changes considered by guardrail:"
+          cat /tmp/changed-files.txt
 
           if [ ! -s /tmp/changed-files.txt ]; then
-            echo "ERROR: OpenCode produced no file changes."
+            echo "ERROR: OpenCode produced no implementation file changes."
             exit 1
           fi
 
@@ -136,9 +152,36 @@ jobs:
 
           if [ -n "$INVALID_FILES" ]; then
             echo "ERROR: OpenCode modified forbidden files:"
-            echo "$INVALID_FILES"
+            printf '%s\n' "$INVALID_FILES"
+
+            {
+              echo '### Changed-file validation failed'
+              echo
+              echo 'Disallowed files:'
+              echo '```text'
+              printf '%s\n' "$INVALID_FILES"
+              echo '```'
+              echo
+              echo 'Allowed implementation paths: `src/**` and `test/**`.'
+            } >> "$GITHUB_STEP_SUMMARY"
+
             exit 1
           fi
+
+          echo "Changed-file validation passed."
+
+          {
+            echo '### Changed-file validation'
+            echo
+            echo 'Allowed-file guardrail passed.'
+            if [ -n "$IGNORED_FILES" ]; then
+              echo
+              echo 'Ignored runner artifact:'
+              echo '```text'
+              printf '%s\n' "$IGNORED_FILES"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run tests
         id: run_tests
