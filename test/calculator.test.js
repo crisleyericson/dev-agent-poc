@@ -8,4 +8,5 @@ test('add sums two numbers', () => {
 
 test('max returns the greater number', () => {
   assert.equal(max(3, 7), 7);
+  assert.equal(max(7, 3), 7);
 });
