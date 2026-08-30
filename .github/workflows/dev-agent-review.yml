@@ -207,6 +207,78 @@ jobs:
           echo "PR: #${PR_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
           echo "Status: ${REVIEW_STATUS}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Persist pipeline status
+        shell: bash
+        run: |
+          case "$REVIEW_STATUS" in
+            APPROVED)
+              PIPELINE_STATUS="APPROVED"
+              ;;
+            CHANGES_REQUESTED)
+              PIPELINE_STATUS="RUNNING"
+              ;;
+            BLOCKED)
+              PIPELINE_STATUS="NEEDS_HUMAN"
+              ;;
+            *)
+              echo "ERROR: Unsupported REVIEW_STATUS: $REVIEW_STATUS"
+              exit 1
+              ;;
+          esac
+
+          UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          REVIEW_RUN="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          {
+            echo '<!-- dev-agent-pipeline-status -->'
+            echo
+            echo '## Dev Agent Pipeline'
+            echo
+            echo "**PIPELINE_STATUS: ${PIPELINE_STATUS}**"
+            echo
+            echo "SOURCE_ISSUE: #${ISSUE_NUMBER}"
+            echo "BUILD_RUN: not tracked yet"
+            echo "REVIEW_RUN: ${REVIEW_RUN}"
+            echo "FIX_RUNS: not tracked yet"
+            echo "PR: #${PR_NUMBER}"
+            echo
+            echo "LAST_STAGE: REVIEW"
+            echo "LAST_REVIEW_STATUS: ${REVIEW_STATUS}"
+            echo "UPDATED_AT: ${UPDATED_AT}"
+          } > /tmp/pipeline-status.md
+
+          COMMENT_ID="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq '.[] |
+                select(.body | contains("<!-- dev-agent-pipeline-status -->")) |
+                .id' |
+              head -n 1
+          )"
+
+          jq -n \
+            --rawfile body /tmp/pipeline-status.md \
+            '{body: $body}' \
+            > /tmp/pipeline-status.json
+
+          if [ -n "$COMMENT_ID" ]; then
+            echo "Updating pipeline status comment $COMMENT_ID"
+
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              --input /tmp/pipeline-status.json
+          else
+            echo "Creating pipeline status comment"
+
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input /tmp/pipeline-status.json
+          fi
+
+          echo "Pipeline status: ${PIPELINE_STATUS}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Trigger FIX
         if: env.REVIEW_STATUS == 'CHANGES_REQUESTED'
         run: |
