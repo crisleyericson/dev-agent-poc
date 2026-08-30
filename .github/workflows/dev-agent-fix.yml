@@ -11,7 +11,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  issues: read
+  issues: write
   actions: write
 
 concurrency:
@@ -220,6 +220,121 @@ jobs:
         run: |
           gh pr comment "$PR_NUMBER" \
             --body "Automated FIX completed and validated. A new independent REVIEW will be started."
+
+      - name: Persist FIX pipeline status
+        shell: bash
+        run: |
+          FIX_RUN="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          COMMENT_ID="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq '.[] |
+                select(.body | contains("<!-- dev-agent-pipeline-status -->")) |
+                .id' |
+              head -n 1
+          )"
+
+          BUILD_RUN="unknown"
+          REVIEW_RUN="unknown"
+          FIX_RUNS="none"
+
+          if [ -n "$COMMENT_ID" ]; then
+            EXISTING_BODY="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+                --jq '.body'
+            )"
+
+            EXISTING_BUILD_RUN="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^BUILD_RUN: //p' |
+                head -n 1
+            )"
+
+            EXISTING_REVIEW_RUN="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^REVIEW_RUN: //p' |
+                head -n 1
+            )"
+
+            EXISTING_FIX_RUNS="$(
+              printf '%s\n' "$EXISTING_BODY" |
+                sed -n 's/^FIX_RUNS: //p' |
+                head -n 1
+            )"
+
+            if [ -n "$EXISTING_BUILD_RUN" ]; then
+              BUILD_RUN="$EXISTING_BUILD_RUN"
+            fi
+
+            if [ -n "$EXISTING_REVIEW_RUN" ]; then
+              REVIEW_RUN="$EXISTING_REVIEW_RUN"
+            fi
+
+            if [ -n "$EXISTING_FIX_RUNS" ]; then
+              FIX_RUNS="$EXISTING_FIX_RUNS"
+            fi
+          fi
+
+          case "$FIX_RUNS" in
+            ""|none|unknown|"not tracked yet")
+              FIX_RUNS="$FIX_RUN"
+              ;;
+            *)
+              case ",$FIX_RUNS," in
+                *",$FIX_RUN,"*)
+                  echo "FIX run already tracked."
+                  ;;
+                *)
+                  FIX_RUNS="${FIX_RUNS},${FIX_RUN}"
+                  ;;
+              esac
+              ;;
+          esac
+
+          {
+            echo '<!-- dev-agent-pipeline-status -->'
+            echo
+            echo '## Dev Agent Pipeline'
+            echo
+            echo '**PIPELINE_STATUS: RUNNING**'
+            echo
+            echo "SOURCE_ISSUE: #${ISSUE_NUMBER}"
+            echo "BUILD_RUN: ${BUILD_RUN}"
+            echo "REVIEW_RUN: ${REVIEW_RUN}"
+            echo "FIX_RUNS: ${FIX_RUNS}"
+            echo "PR: #${PR_NUMBER}"
+            echo
+            echo "LAST_STAGE: FIX"
+            echo "LAST_REVIEW_STATUS: CHANGES_REQUESTED"
+            echo "UPDATED_AT: ${UPDATED_AT}"
+          } > /tmp/pipeline-status.md
+
+          jq -n \
+            --rawfile body /tmp/pipeline-status.md \
+            '{body: $body}' \
+            > /tmp/pipeline-status.json
+
+          if [ -n "$COMMENT_ID" ]; then
+            echo "Updating pipeline status comment $COMMENT_ID"
+
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              --input /tmp/pipeline-status.json
+          else
+            echo "Creating pipeline status comment"
+
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input /tmp/pipeline-status.json
+          fi
+
+          echo "Pipeline status: RUNNING" >> "$GITHUB_STEP_SUMMARY"
+          echo "Fix run: ${FIX_RUN}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Trigger REVIEW
         run: |
