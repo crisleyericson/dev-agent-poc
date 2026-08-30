@@ -147,6 +147,8 @@ jobs:
           } > /tmp/review-prompt.txt
 
       - name: Run REVIEW agent
+        id: review_agent
+        continue-on-error: true
         shell: bash
         run: |
           /tmp/run-opencode-agent.sh \
@@ -158,7 +160,14 @@ jobs:
             --timeout 180 \
             --attempts 3
 
+      - name: Handle REVIEW agent failure
+        if: steps.review_agent.outcome == 'failure'
+        run: |
+          echo "REVIEW_STATUS=AGENT_FAILED" >> "$GITHUB_ENV"
+          echo "REVIEW_FAILURE_REASON=OpenCode REVIEW failed after configured retries" >> "$GITHUB_ENV"
+
       - name: Parse REVIEW result
+        if: steps.review_agent.outcome == 'success'
         run: |
           jq -r '
             select(.type == "text" and .part.type == "text")
@@ -188,6 +197,7 @@ jobs:
           echo "Parsed REVIEW_STATUS=$REVIEW_STATUS"
 
       - name: Persist REVIEW on PR
+        if: steps.review_agent.outcome == 'success'
         run: |
           {
             echo '## Agent REVIEW'
@@ -217,7 +227,7 @@ jobs:
             CHANGES_REQUESTED)
               PIPELINE_STATUS="RUNNING"
               ;;
-            BLOCKED)
+            BLOCKED|AGENT_FAILED)
               PIPELINE_STATUS="NEEDS_HUMAN"
               ;;
             *)
@@ -244,6 +254,11 @@ jobs:
             echo
             echo "LAST_STAGE: REVIEW"
             echo "LAST_REVIEW_STATUS: ${REVIEW_STATUS}"
+
+            if [ "$REVIEW_STATUS" = "AGENT_FAILED" ]; then
+              echo "REASON: ${REVIEW_FAILURE_REASON}"
+            fi
+
             echo "UPDATED_AT: ${UPDATED_AT}"
           } > /tmp/pipeline-status.md
 
@@ -286,3 +301,9 @@ jobs:
 
           gh workflow run dev-agent-fix.yml \
             -f pr_number="${PR_NUMBER}"
+
+      - name: Fail workflow after REVIEW agent failure
+        if: steps.review_agent.outcome == 'failure'
+        run: |
+          echo "REVIEW failed after configured retries."
+          exit 1
