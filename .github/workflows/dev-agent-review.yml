@@ -16,6 +16,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  actions: write
 
 jobs:
   review:
@@ -205,3 +206,11 @@ jobs:
           echo "### REVIEW result" >> "$GITHUB_STEP_SUMMARY"
           echo "PR: #${PR_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
           echo "Status: ${REVIEW_STATUS}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Trigger FIX
+        if: env.REVIEW_STATUS == 'CHANGES_REQUESTED'
+        run: |
+          echo "Triggering FIX for PR #${PR_NUMBER}"
+
+          gh workflow run dev-agent-fix.yml \
+            -f pr_number="${PR_NUMBER}"
